@@ -9,6 +9,7 @@ using Umbraco.Courier.Core;
 using Umbraco.Courier.Core.ProviderModel;
 using Umbraco.Courier.DataResolvers.PropertyDataResolvers;
 using Umbraco.Courier.ItemProviders;
+using Umbraco.Core.Models;
 
 namespace Umbraco.Courier.Contrib.Resolvers.GridCellDataResolvers
 {
@@ -16,7 +17,7 @@ namespace Umbraco.Courier.Contrib.Resolvers.GridCellDataResolvers
     {
         public override bool ShouldRun(string view, GridValueControlModel cell)
         {
-            return view.Contains("leblender");
+            return view != null && view.Contains("leblender");
         }
 
         public override void PackagingCell(Item item, ContentProperty propertyData, GridValueControlModel cell)
@@ -52,6 +53,11 @@ namespace Umbraco.Courier.Contrib.Resolvers.GridCellDataResolvers
                 // loop through each of the property objects
                 foreach (dynamic leBlenderPropertyWrapper in properties)
                 {
+                    if (leBlenderPropertyWrapper == null) 
+                    {
+                        continue;
+                    }
+
                     // deserialize the value of the wrapper object into a LeBlenderProperty object
                     var leBlenderPropertyJson = leBlenderPropertyWrapper.Value.ToString() as string;
                     // continue if there's no data stored
@@ -100,6 +106,43 @@ namespace Umbraco.Courier.Contrib.Resolvers.GridCellDataResolvers
                     else
                     {
                         // run the resolvers (convert UniqueIds/guids back to Ids/integers)
+                        var data = pseudoPropertyDataItem.Data[0];
+                        if (data.Value != null && data.UniqueId == Guid.Empty && data.Value.ToString() != null && data.Value.ToString().StartsWith("null")) 
+                        {
+                            // Corner case when Umbraco < 7.6 and Courier > 3.0.6
+                            // Only works if prevalues are already synced between the source and target machine (using uSync for example)
+                            IDataTypeDefinition dtDef = null;
+                            try 
+                            {
+                                dtDef = dataTypeService.GetDataTypeDefinitionById(data.DataType);
+                            }
+                            catch (Exception ex)
+                            {
+                                // ignore
+                                string exception = ex.ToString();
+                                dtDef = null;
+                            }
+                            if (dtDef != null)
+                            {
+                                var preValuesResult = dataTypeService.GetPreValuesCollectionByDataTypeId(dtDef.Id);
+                                if (preValuesResult != null)
+                                {
+                                    var dict = preValuesResult.PreValuesAsDictionary;
+                                    var prevaluesToLookup = data.Value.ToString().TrimStart("null").Split(',');
+                                    var newPrevalues = new List<string>();
+                                    foreach (var prevalueToLookup in prevaluesToLookup)
+                                    {
+                                        var hit = dict.Values.FirstOrDefault(x => x.Value == prevalueToLookup);
+                                        if (hit != null)
+                                        {
+                                            newPrevalues.Add(hit.Id.ToString());
+                                        }
+                                    }
+                                    data.Value = string.Join(",", newPrevalues);
+                                }
+                            }
+                        }
+
                         ResolutionManager.Instance.ExtractingItem(pseudoPropertyDataItem, propertyDataItemProvider);
                     }
                     // replace the property value with the resolved value
